@@ -5,15 +5,12 @@ from data_loader import get_batch
 import training_params as params
 import network_utils
 import time
+import sys
 
 def update_running_loss(rl, l, i):
     i = min(i, 99)
     rl = (rl * i + l) / (i + 1)
     return rl
-
-# Training phase indicates the number of reduction layers in the network. 
-# It is compensated for by resizing the input images.
-training_phase = 0 
 
 training = tf.placeholder(tf.bool)
 X = tf.placeholder(tf.float32, (None, params.shape[0], params.shape[1], 3))
@@ -40,10 +37,8 @@ loggamma_x = tf.get_variable('loggamma_x', [], tf.float32, tf.zeros_initializer(
 gamma_x = tf.exp(loggamma_x)
 
 encoder_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='encoder_')
-if params.phase > 1:
-    decoder_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='decoder_')
-if params.phase > 2:
-    discriminator_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='discriminator_')
+decoder_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='decoder_')
+discriminator_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='discriminator_')
 
 split_ids = tf.split(mu_id, params.batch_size, axis = 0)
 
@@ -103,13 +98,28 @@ discriminator_update = tf.train.AdamOptimizer(0.01*lr).minimize(discriminator_lo
 
 
 init = tf.global_variables_initializer()
-saver = tf.train.Saver()
+def is_previous_var(v, p):
+    prev_phases = ['phase_0'] + ['phase_'+str(i) for i in range(p)]
+    return any(phase in v.name for phase in prev_phases)
+if params.phase > 0:
+    vars_to_restore = [v for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES) if is_previous_var(v, params.phase-1)]
+    prev_phase_saver = tf.train.Saver(vars_to_restore)
+    for v in vars_to_restore:
+        print(v.name, v.shape)
+current_phase_saver = tf.train.Saver()
 
 with tf.Session() as sess:
     sess.run(init)
     try:
-        saver.restore(sess, params.save_path)
+        try:
+            current_phase_saver.restore(sess, params.save_path)
+        except:
+            print("Couldn't load current phase")
+            print("Error:", sys.exc_info()[0])
+            prev_phase_saver.restore(sess, params.save_path)
     except:
+        print("Couldn't load previous phase")
+        print("Error:", sys.exc_info()[0])
         print("COULD NOT RESTORE MODEL. TRAINING FROM SCATCH")
     running_loss = 0
     iterations = 0
@@ -163,6 +173,8 @@ with tf.Session() as sess:
                 print("IMAGE ",j,": ", np.average(np.power(10*(o[j]-next_batch[j]) / np.exp(lgx), 2) / 2.0 + lgx))
                 diff_img = (np.power(o[j] - next_batch[j], 2) - 2.0) / 2.0
                 image_utils.display_image(image_utils.unpreprocess_image(diff_img))
+                if j > 1:
+                    break
             print("TOTAL LOSS: ", np.average(np.power(10*(o - next_batch) / np.exp(lgx), 2) / 2.0 + lgx))
             print("LOGGAMMA_X: ", lgx)
             # var_img = np.std(o, axis=0)
@@ -179,12 +191,12 @@ with tf.Session() as sess:
                 print(poses_to_inject.shape)
                 print("%$%$%$%$%$%$%$%")
                 interpolated_images = sess.run(fabricated_decoder, feed_dict={injected_id:interpolated_id, injected_pose:poses_to_inject})
-                for k in range(params.batch_size):
-                    image_utils.display_image(image_utils.unpreprocess_image(interpolated_images[k]))
+                # for k in range(params.batch_size):
+                #     image_utils.display_image(image_utils.unpreprocess_image(interpolated_images[k]))
             q = input("WOULD YOU LIKE TO QUIT?: ")
             if q in ['YES', "Y", 'y', 'yes', 'Yes']:
                 ans = input("WOULD YOU LIKE TO SAVE: ")
                 if ans in ['YES', "Y", 'y', 'yes', 'Yes']:
-                    saver.save(sess, params.save_path)
+                    current_phase_saver.save(sess, params.save_path)
                 break
     
