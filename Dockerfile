@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-FROM tensorflow/tensorflow:latest
+FROM tensorflow/tensorflow:2.4.0-gpu
 
 COPY . .
 
