@@ -1,4 +1,5 @@
-import tensorflow as tf 
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior() 
 from math import log
 import numpy as np 
 import training_params as params
@@ -67,7 +68,7 @@ def encoder(net, batch_size, latent_size=1024, input_shape=(250,250), reuse=Fals
         mu_pose, logstd_pose = tf.split(pose_embed, 2, axis=1)
         std_pose = tf.exp(logstd_pose)
 
-    return mu_id, std_id, mu_pose, std_pose
+    return mu_id, std_id, mu_pose, std_pose, nets
 
 def sampling_trick(mu, std):
     return mu + std * tf.random_normal([params.batch_size, params.latent_size])
@@ -102,7 +103,7 @@ def adain(content, style, size, u, i, p):
         meanC, varC = tf.nn.moments(content, [1,2], keep_dims = True)
         sigmaC = tf.sqrt(tf.add(varC, epsilon))
         sigmaS = tf.sqrt(tf.add(varS, epsilon))
-        return (content - meanC) * sigmaS / sigmaC + meanS
+        return (content - meanC) * sigmaS / (sigmaC + 1e-6) + meanS
 
 
 def decoder(id, latent_space, batch_size=32, latent_size=1024, output_shape=(250,250), add_noise=True, MLP_inputs=True, use_bias=True, reuse=False):

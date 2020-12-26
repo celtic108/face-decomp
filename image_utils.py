@@ -3,7 +3,7 @@ import os
 from PIL import Image, ImageOps
 from random import random
 
-image_dir = '../lfw-deepfunneled'
+image_dir = 'lfw-deepfunneled'
 
 def display_image(image, save_dir = None):
     if image.shape[0] == 1:

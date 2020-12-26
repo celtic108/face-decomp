@@ -1,4 +1,4 @@
-phase = 6
+phase = 4
 batch_size = max(int(4), min(64, int(128/2**(phase))))
 shape = (2**(phase+2), 2**(phase+2))
 latent_size = 256 # Must by divisible by 16

@@ -1,5 +1,6 @@
 import numpy as np 
-import tensorflow as tf 
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior() 
 import image_utils
 from data_loader import get_batch
 import training_params as params
@@ -18,7 +19,7 @@ print("*^*&^*&^*&^*&^")
 print(X.shape)
 print("*^*&^*&^*&^*&^")    
 
-mu_id, std_id, mu_pose, std_pose = network_utils.encoder(X, params.batch_size, params.latent_size, params.shape, False, training)
+mu_id, std_id, mu_pose, std_pose, nts = network_utils.encoder(X, params.batch_size, params.latent_size, params.shape, False, training)
 encoded_id = network_utils.sampling_trick(mu_id, std_id)
 encoded_pose = network_utils.sampling_trick(mu_pose, std_pose)
 
@@ -29,7 +30,7 @@ fabricated_decoder = network_utils.decoder(injected_id, injected_pose, params.ba
 
 real_disc = network_utils.discriminator(X, params.shape, params.batch_size, params.latent_size, training=training)
 fake_disc = network_utils.discriminator(output, params.shape, params.batch_size, params.latent_size, reuse=True, training=training)
-reencoded_ids, _, _, _ = network_utils.encoder(output, params.batch_size, params.latent_size, params.shape, True, training)
+reencoded_ids, _, _, _, _ = network_utils.encoder(output, params.batch_size, params.latent_size, params.shape, True, training)
     
 
 # encoded_ids = tf.split(mid, 2, axis=-1)[0]
@@ -39,6 +40,9 @@ gamma_x = tf.exp(loggamma_x)
 encoder_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='encoder_')
 decoder_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='decoder_')
 discriminator_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='discriminator_')
+all_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+for avn in all_vars:
+    print(type(avn.name))
 
 split_ids = tf.split(mu_id, params.batch_size, axis = 0)
 
@@ -50,12 +54,12 @@ for i in range(params.batch_size):
     for j in range(i + 1, params.batch_size):
         if i < number_of_pairs * 2 - 1 and i % 2 == 0 and j == i + 1:
             id_loss += 100*tf.reduce_mean(tf.pow(split_ids[i] - split_ids[j], 2))
-            print(i, ",", j, "-PAIR")
-        else:
-            # id_loss += tf.maximum(-1*tf.reduce_mean(tf.pow(split_ids[i] - split_ids[j], 2)) + 2., 0)
-            print(i, ",", j, '-NOT A PAIR')
+            # print(i, ",", j, "-PAIR")
+        # else:
+            id_loss += tf.maximum(-1*tf.reduce_mean(tf.pow(split_ids[i] - split_ids[j], 2)) + 2., 0)
+            # print(i, ",", j, '-NOT A PAIR')
 id_loss /= ((params.batch_size * (params.batch_size - 1)) / 2)
-pixel_loss = tf.reduce_mean(tf.pow((10*(X - output)) / gamma_x, 2) / 2.0 + loggamma_x)
+pixel_loss = tf.reduce_mean(tf.pow(((X - output)) / gamma_x, 2) / 2.0 + loggamma_x)
 #train_disc_true = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(
 #    labels=tf.ones_like(real_disc, dtype=tf.int32), logits=real_disc))
 train_disc_true = tf.reduce_mean(tf.pow(tf.ones_like(real_disc) - real_disc, 2))
@@ -82,10 +86,12 @@ id_regen_loss = 100*network_utils.get_loss(mu_id, reencoded_ids)
 # update_group.append(id_update)
 # update_op = tf.group(*update_group)
 
-id_kl_loss = 0.001*network_utils.get_kl_loss(mu_id, std_id)
-pose_kl_loss = 0.001*network_utils.get_kl_loss(mu_pose, std_pose)
+id_kl_loss = tf.get_variable('id_kl_loss', [], tf.float32, tf.zeros_initializer())
+pose_kl_loss = tf.get_variable('pose_kl_loss', [], tf.float32, tf.zeros_initializer())
+# id_kl_loss = 0.001*network_utils.get_kl_loss(mu_id, std_id)
+# pose_kl_loss = 0.001*network_utils.get_kl_loss(mu_pose, std_pose)
 
-encoder_loss = pixel_loss + id_loss + id_kl_loss + pose_kl_loss + 0*id_regen_loss
+encoder_loss = pixel_loss + id_loss + id_kl_loss + pose_kl_loss + id_regen_loss
 decoder_loss = pixel_loss + id_regen_loss + trick_disc_loss
 discriminator_loss = train_disc_true + train_disc_false
 
@@ -104,8 +110,8 @@ def is_previous_var(v, p):
 if params.phase > 0:
     vars_to_restore = [v for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES) if is_previous_var(v, params.phase-1)]
     prev_phase_saver = tf.train.Saver(vars_to_restore)
-    for v in vars_to_restore:
-        print(v.name, v.shape)
+    # for v in vars_to_restore:
+    #     print(v.name, v.shape)
 current_phase_saver = tf.train.Saver()
 
 with tf.Session() as sess:
@@ -139,6 +145,13 @@ with tf.Session() as sess:
                        encoder_update, decoder_update, discriminator_update,
                        id_kl_loss, pose_kl_loss, pixel_loss, id_regen_loss, id_loss,
                        trick_disc_loss, train_disc_true, train_disc_false]
+            
+            null_check = sess.run(all_vars, feed_dict={X: next_batch, training: False, lr: params.learning_rate})
+            for nc, var in zip(null_check, all_vars):
+                if np.isnan(np.sum(nc)):
+                    print(var.name, ":", var.shape)
+            
+
             feed_dict = {X: next_batch, training:True, lr:params.learning_rate}
             el, dl, dcl, _, _, _, idkl, pkl, pl, idrgl, idl, txdl, tdt, tdf = sess.run(runners, feed_dict=feed_dict)
             l = el + dl + dcl
@@ -158,11 +171,11 @@ with tf.Session() as sess:
                 for j in range(i+1, mi.shape[0]):
                     if i < number_of_pairs * 2 - 1 and i % 2 == 0 and j == i + 1:
                         temp_mi_loss = 100*np.average(np.square(mi[i] - mi[j]))
-                        print(i, ",", j, "-PAIR", temp_mi_loss, np.sum(np.square(mi[i], np.zeros_like(mi[i])))**0.5)
+                        # print(i, ",", j, "-PAIR", temp_mi_loss, np.sum(np.square(mi[i], np.zeros_like(mi[i])))**0.5)
                     else:
                         temp_mi_loss = 20*max(-1*np.average(np.square(mi[i] - mi[j])) + 2., 0)
-                        print(i, ",", j, '-NOT A PAIR', temp_mi_loss, np.sum(np.square(mi[i], np.zeros_like(mi[i])))**0.5)
-                    print(np.sum(np.square(mi[i] - mi[j]))**0.5)
+                        # print(i, ",", j, '-NOT A PAIR', temp_mi_loss, np.sum(np.square(mi[i], np.zeros_like(mi[i])))**0.5)
+                    # print(np.sum(np.square(mi[i] - mi[j]))**0.5)
                     running_mi_loss += temp_mi_loss
             print("MI LOSS: ", running_mi_loss / ((params.batch_size * (params.batch_size - 1)) / 2))
             o, lgx = sess.run([output, loggamma_x], feed_dict={X: next_batch, training:True})
